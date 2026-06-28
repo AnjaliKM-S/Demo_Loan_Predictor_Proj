@@ -1,13 +1,24 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
+import os
 import joblib
-from pathlib import Path
+import pandas as pd
+import streamlit as st
+from sklearn.preprocessing import LabelEncoder
 
-MODEL_PATH = Path("models/model.pkl")
-SCALER_PATH = Path("models/scaler.pkl")
+st.set_page_config(page_title="Loan Prediction App", page_icon="💰", layout="wide")
 
-FEATURE_ORDER = [
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "models", "model.pkl")
+SCALER_PATH = os.path.join(BASE_DIR, "models", "scaler.pkl")
+DATASET_PATH = os.path.join(BASE_DIR, "data", "dataset.csv")
+
+if not os.path.exists(MODEL_PATH):
+    st.error("Model file not found. Please place the trained model at models/model.pkl")
+    st.stop()
+
+model = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH) if os.path.exists(SCALER_PATH) else None
+
+feature_order = [
     "Gender",
     "Married",
     "Dependents",
@@ -23,168 +34,81 @@ FEATURE_ORDER = [
     "Property_Area_Urban",
 ]
 
-LABEL_ENCODINGS = {
-    "Gender": {"Female": 0, "Male": 1},
-    "Married": {"No": 0, "Yes": 1},
-    "Dependents": {"0": 0, "1": 1, "2": 2, "3+": 3},
-    "Education": {"Graduate": 0, "Not Graduate": 1},
-    "Self_Employed": {"No": 0, "Yes": 1},
-}
+st.title("Loan Approval Prediction")
+st.write("Enter the applicant details to estimate whether the loan is likely to be approved.")
 
-PROPERTY_AREAS = ["Rural", "Semiurban", "Urban"]
-CREDIT_HISTORY_OPTIONS = ["1.0", "0.0"]
+with st.sidebar:
+    st.header("Applicant Information")
 
+    gender = st.selectbox("Gender", ["Male", "Female"])
+    married = st.selectbox("Married", ["No", "Yes"])
+    dependents = st.selectbox("Dependents", ["0", "1", "2", "3+"])
+    education = st.selectbox("Education", ["Graduate", "Not Graduate"])
+    self_employed = st.selectbox("Self_Employed", ["No", "Yes"])
+    applicant_income = st.number_input("Applicant Income", min_value=0, step=1000)
+    coapplicant_income = st.number_input("Coapplicant Income", min_value=0, step=1000)
+    loan_amount = st.number_input("Loan Amount", min_value=0, step=1000)
+    loan_amount_term = st.number_input("Loan Amount Term", min_value=0, step=12)
+    credit_history = st.selectbox("Credit History", [0, 1])
+    property_area = st.selectbox("Property Area", ["Urban", "Rural", "Semiurban"])
 
-def load_artifacts():
-    if not MODEL_PATH.exists() or not SCALER_PATH.exists():
-        raise FileNotFoundError(
-            f"Required artifacts are missing. Expected {MODEL_PATH} and {SCALER_PATH}."
-        )
-
-    model = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-    return model, scaler
-
-
-def build_feature_vector(user_inputs: dict) -> pd.DataFrame:
-    encoded = {
-        "Gender": LABEL_ENCODINGS["Gender"][user_inputs["Gender"]],
-        "Married": LABEL_ENCODINGS["Married"][user_inputs["Married"]],
-        "Dependents": LABEL_ENCODINGS["Dependents"][user_inputs["Dependents"]],
-        "Education": LABEL_ENCODINGS["Education"][user_inputs["Education"]],
-        "Self_Employed": LABEL_ENCODINGS["Self_Employed"][user_inputs["Self_Employed"]],
-        "ApplicantIncome": float(user_inputs["ApplicantIncome"]),
-        "CoapplicantIncome": float(user_inputs["CoapplicantIncome"]),
-        "LoanAmount": float(user_inputs["LoanAmount"]),
-        "Loan_Amount_Term": float(user_inputs["Loan_Amount_Term"]),
-        "Credit_History": float(user_inputs["Credit_History"]),
-    }
-
-    encoded["Total_Income"] = encoded["ApplicantIncome"] + encoded["CoapplicantIncome"]
-    encoded["Property_Area_Semiurban"] = 1 if user_inputs["Property_Area"] == "Semiurban" else 0
-    encoded["Property_Area_Urban"] = 1 if user_inputs["Property_Area"] == "Urban" else 0
-
-    return pd.DataFrame([encoded], columns=FEATURE_ORDER)
-
-
-def predict_loan_status(model, scaler, feature_df: pd.DataFrame) -> tuple[str, float]:
-    scaled_features = scaler.transform(feature_df)
-    prediction = model.predict(scaled_features)[0]
-
-    probability = None
-    if hasattr(model, "predict_proba"):
-        try:
-            proba = model.predict_proba(scaled_features)[0]
-            classes = list(model.classes_)
-            if "Y" in classes:
-                probability = float(proba[classes.index("Y")])
-            else:
-                probability = float(proba.max())
-        except Exception:
-            probability = None
-
-    status = "Approved" if str(prediction) == "Y" else "Not Approved"
-    return status, probability
-
-
-def main():
-    st.set_page_config(
-        page_title="Loan Approval Predictor",
-        page_icon="💰",
-        layout="centered",
-    )
-
-    st.title("Loan Approval Prediction")
-    st.write(
-        "Enter the applicant details below to get a quick loan approval prediction. "
-        "This app reproduces the exact preprocessing and feature order used during model training."
-    )
-
-    with st.sidebar:
-        st.header("Applicant Inputs")
-        st.markdown(
-            "Use the form controls to provide all required fields. "
-            "The prediction is based on a pretrained classification model." 
-        )
-        st.caption("Loan status is predicted as Approved or Not Approved.")
-
+if st.button("Predict Loan Status"):
     try:
-        model, scaler = load_artifacts()
-    except FileNotFoundError as error:
-        st.error(error)
-        st.stop()
-    except Exception as error:
-        st.error("Unable to load model artifacts. Please check the files in the models folder.")
-        st.stop()
+        data = {
+            "Gender": gender,
+            "Married": married,
+            "Dependents": dependents,
+            "Education": education,
+            "Self_Employed": self_employed,
+            "ApplicantIncome": applicant_income,
+            "CoapplicantIncome": coapplicant_income,
+            "LoanAmount": loan_amount,
+            "Loan_Amount_Term": loan_amount_term,
+            "Credit_History": credit_history,
+            "Total_Income": applicant_income + coapplicant_income,
+        }
 
-    with st.form(key="loan_form"):
-        gender = st.selectbox("Gender", options=["Female", "Male"])
-        married = st.selectbox("Married", options=["No", "Yes"])
-        dependents = st.selectbox("Dependents", options=["0", "1", "2", "3+"])
-        education = st.selectbox("Education", options=["Graduate", "Not Graduate"])
-        self_employed = st.selectbox("Self Employed", options=["No", "Yes"])
+        input_df = pd.DataFrame([data])
 
-        applicant_income = st.number_input(
-            "Applicant Income", min_value=0.0, value=2500.0, step=100.0, format="%.2f"
-        )
-        coapplicant_income = st.number_input(
-            "Coapplicant Income", min_value=0.0, value=0.0, step=100.0, format="%.2f"
-        )
-        loan_amount = st.number_input(
-            "Loan Amount (in thousands)", min_value=0.0, value=120.0, step=10.0, format="%.2f"
-        )
-        loan_term = st.number_input(
-            "Loan Amount Term (days)", min_value=0.0, value=360.0, step=12.0, format="%.0f"
-        )
-        credit_history = st.selectbox("Credit History", options=CREDIT_HISTORY_OPTIONS)
-        property_area = st.selectbox("Property Area", options=PROPERTY_AREAS)
-
-        submit_button = st.form_submit_button("Predict Loan Status")
-
-    if submit_button:
-        if loan_amount <= 0 or loan_term <= 0:
-            st.error("Loan amount and term must be positive numbers.")
+        if os.path.exists(DATASET_PATH):
+            training_df = pd.read_csv(DATASET_PATH)
+            categorical_cols = ["Gender", "Married", "Dependents", "Education", "Self_Employed"]
+            encoders = {}
+            for col in categorical_cols:
+                encoder = LabelEncoder()
+                encoder.fit(training_df[col].astype(str))
+                encoders[col] = encoder
+                input_df[col] = encoders[col].transform(input_df[col].astype(str))
         else:
-            user_inputs = {
-                "Gender": gender,
-                "Married": married,
-                "Dependents": dependents,
-                "Education": education,
-                "Self_Employed": self_employed,
-                "ApplicantIncome": applicant_income,
-                "CoapplicantIncome": coapplicant_income,
-                "LoanAmount": loan_amount,
-                "Loan_Amount_Term": loan_term,
-                "Credit_History": credit_history,
-                "Property_Area": property_area,
+            for col in ["Gender", "Married", "Dependents", "Education", "Self_Employed"]:
+                input_df[col] = input_df[col].astype(str)
+                input_df[col] = LabelEncoder().fit_transform(input_df[col])
+
+        property_dummies = pd.DataFrame(
+            {
+                "Property_Area_Semiurban": [0],
+                "Property_Area_Urban": [0],
             }
-            feature_df = build_feature_vector(user_inputs)
+        )
+        if property_area == "Semiurban":
+            property_dummies["Property_Area_Semiurban"] = 1
+        elif property_area == "Urban":
+            property_dummies["Property_Area_Urban"] = 1
 
-            try:
-                status, proba = predict_loan_status(model, scaler, feature_df)
-                st.subheader("Prediction Result")
-                if status == "Approved":
-                    st.success(f"Loan Status: {status}")
-                else:
-                    st.error(f"Loan Status: {status}")
+        input_df = pd.concat([input_df, property_dummies], axis=1)
 
-                if proba is not None:
-                    st.write(f"Approval probability: {proba:.1%}")
+        for col in feature_order:
+            if col not in input_df.columns:
+                input_df[col] = 0
 
-                with st.expander("View processed input features"):
-                    st.table(feature_df.T.rename(columns={0: "Value"}))
-            except Exception as error:
-                st.error("Prediction failed. Please verify the input values and model files.")
-                st.exception(error)
+        input_df = input_df[feature_order]
 
-    st.markdown("---")
-    st.markdown(
-        "### Notes\n"
-        "- This app uses the exact feature order and preprocessing steps from the original training pipeline.\n"
-        "- Categorical values are encoded with the same label mapping as training.\n"
-        "- Property Area uses one-hot encoding with the same dropped column logic."
-    )
+        if scaler is not None:
+            input_scaled = scaler.transform(input_df)
+            prediction = model.predict(input_scaled)[0]
+        else:
+            prediction = model.predict(input_df)[0]
 
-
-if __name__ == "__main__":
-    main()
+        st.success(f"Predicted Loan Status: {prediction}")
+    except Exception as exc:
+        st.error(f"Prediction failed: {exc}")
